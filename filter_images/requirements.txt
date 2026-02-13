@@ -1,0 +1,2 @@
+# Requirements for filter_images.py
+Pillow
