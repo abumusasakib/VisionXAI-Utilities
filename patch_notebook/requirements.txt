@@ -1,0 +1,2 @@
+# Requirements for patch_notebook.py
+# Standard library dependencies only (json, argparse, pathlib, sys, os, textwrap, re)
