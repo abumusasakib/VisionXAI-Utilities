@@ -588,18 +588,27 @@ def collect_all_caption_data(
                 # Check if this file is part of the custom category-organized dataset ('image_captioning_dataset')
                 # vs the standard 'Bangla Image Captioning' dataset.
                 if "image_captioning_dataset" in root:
-                    # Custom dataset: images are stored directly alongside captioning.xlsx in each sub-category folder
-                    img_dir = root
+                    # Custom dataset: check for 'image' or 'images' subfolder first (flattened),
+                    # otherwise fallback to root (images stored directly alongside captioning.xlsx in each sub-category folder)
+                    img_dir = os.path.join(root, "image")
+                    if not os.path.exists(img_dir):
+                        img_dir = os.path.join(root, "images")
+                        if not os.path.exists(img_dir):
+                            img_dir = root
                 else:
                     # Standard Bangla Image Captioning: check for 'image' subfolder or fallback to root
                     img_dir = os.path.join(root, "image")
                     if not os.path.exists(img_dir):
-                        img_dir = root  # Fallback to the current directory if 'image' subfolder doesn't exist.
-                
+                        img_dir = os.path.join(root, "images")
+                        if not os.path.exists(img_dir):
+                            img_dir = root
+
                 # print(f"Parsing XLSX: {file_path}") # This print is inside the parser's extract method
                 captions = xlsx_parser.extract(
                     file_path, images_path=img_dir, validate_images=validate_images
                 )
+
+
 
 
             # Process CSV files containing "ban-cap" in their name.
