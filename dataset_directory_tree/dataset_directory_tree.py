@@ -19,10 +19,14 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
 # Helpers
 def is_image_file(filename):
+    lower_name = filename.lower()
+    if lower_name.endswith(".npy"):
+        return False
     return os.path.splitext(filename)[1].lower() in IMAGE_EXTENSIONS
 
 def get_extension(filename):
     return os.path.splitext(filename)[1].lower()
+
 
 def extract_referenced_images_from_xlsx(filepath):
     referenced_images = set()
@@ -90,28 +94,59 @@ def print_tree_and_count(path, prefix="", output_lines=None, all_images=None):
         output_lines.append(prefix + "└── [Permission Denied]")
         return
 
-    image_counter = defaultdict(int)
-    other_files = []
+    subdirs = []
+    files = []
 
     for item in items:
         full_path = os.path.join(path, item)
         if os.path.isdir(full_path):
-            connector = "└── " if item == items[-1] else "├── "
-            output_lines.append(prefix + connector + item + "/")
-            new_prefix = prefix + ("    " if item == items[-1] else "│   ")
-            print_tree_and_count(full_path, new_prefix, output_lines, all_images)
+            subdirs.append(item)
         else:
-            if is_image_file(item):
-                ext = get_extension(item)
-                image_counter[ext] += 1
-                all_images.add(item)
-            else:
-                connector = "└── " if item == items[-1] else "├── "
-                output_lines.append(prefix + connector + item)
+            files.append(item)
 
+    image_counter = defaultdict(int)
+    other_counter = defaultdict(int)
+
+    for f in files:
+        if is_image_file(f):
+            ext = get_extension(f)
+            image_counter[ext] += 1
+            if all_images is not None:
+                all_images.add(f)
+        elif f.lower().endswith(".npy"):
+            other_counter[".npy"] += 1
+        else:
+            ext = get_extension(f) or "other"
+            other_counter[ext] += 1
+
+    total_children = len(subdirs) + (1 if image_counter else 0) + (1 if other_counter else 0)
+    current = 0
+
+    # Recursively render subdirectories
+    for item in subdirs:
+        current += 1
+        is_last = (current == total_children)
+        connector = "└── " if is_last else "├── "
+        output_lines.append(prefix + connector + item + "/")
+        new_prefix = prefix + ("    " if is_last else "│   ")
+        print_tree_and_count(os.path.join(path, item), new_prefix, output_lines, all_images)
+
+    # Summarize image counts for this directory
     if image_counter:
-        for ext, count in sorted(image_counter.items()):
-            output_lines.append(prefix + f"[{ext} files: {count}]")
+        current += 1
+        is_last = (current == total_children)
+        connector = "└── " if is_last else "├── "
+        counts_str = ", ".join(f"{cnt} {ext}" for ext, cnt in sorted(image_counter.items()))
+        output_lines.append(prefix + connector + f"[Images: {counts_str}]")
+
+    # Summarize non-image file counts for this directory
+    if other_counter:
+        current += 1
+        is_last = (current == total_children)
+        connector = "└── " if is_last else "├── "
+        other_str = ", ".join(f"{cnt} {ext}" for ext, cnt in sorted(other_counter.items()))
+        output_lines.append(prefix + connector + f"[Files: {other_str}]")
+
 
 def generate_tree_and_stats(folder_path, output_filename="directory_tree.md"):
     """Generate a markdown report containing the directory tree and dataset-level image/caption statistics.
@@ -240,13 +275,29 @@ def generate_tree_and_stats(folder_path, output_filename="directory_tree.md"):
     output_lines.append(f"📦 Unused images (not referenced): {len(unused_images)}")
     output_lines.append("---")
 
-    # Save report
+    # Save markdown report
     with open(output_filename, "w", encoding="utf-8") as f:
         f.write("\n".join(output_lines))
 
-    print(f"\n✅ Directory tree and stats saved to `{output_filename}`")
+    # Also save tree structure to directory list.txt
+    list_txt_filename = os.path.join(os.path.dirname(output_filename) or ".", "directory list.txt")
+    with open(list_txt_filename, "w", encoding="utf-8") as f:
+        f.write("\n".join(output_lines))
+
+    print(f"\n✅ Directory tree and stats saved to `{output_filename}` and `{list_txt_filename}`")
 
 
-# === Example usage ===
-folder_path = input("Enter the folder path to scan: ").strip()
-generate_tree_and_stats(folder_path)
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Generate directory tree and caption statistics for a dataset directory.")
+    parser.add_argument("--folder", "-f", help="Path to dataset directory to scan")
+    parser.add_argument("--output", "-o", default="directory_tree.md", help="Output markdown filename (default: directory_tree.md)")
+
+    args = parser.parse_args()
+    folder_path = args.folder
+    if not folder_path:
+        folder_path = input("Enter the folder path to scan: ").strip()
+
+    generate_tree_and_stats(folder_path, output_filename=args.output)
+
+
