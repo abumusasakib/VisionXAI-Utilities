@@ -6,8 +6,14 @@ from pathlib import Path
 from collections import defaultdict
 import statistics
 
-# Import caption parsing utilities
+import sys
+# Import caption parsing utilities package
+UTILITIES_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if UTILITIES_DIR not in sys.path:
+    sys.path.insert(0, UTILITIES_DIR)
+
 from caption_parsers import collect_all_caption_data
+
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 

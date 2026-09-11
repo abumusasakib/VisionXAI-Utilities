@@ -1,0 +1,2 @@
+# Requirements for caption_parsers package
+# Standard library dependencies: csv, json, zipfile, xml, os, pathlib, typing, abc
