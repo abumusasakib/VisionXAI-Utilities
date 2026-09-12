@@ -8,11 +8,12 @@ generic CLI / API operations (find & replace snippet, insert cell, append cell, 
 """
 
 import argparse
+import ast
 import json
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 
 # ---------------------------------------------------------------------------
@@ -65,7 +66,6 @@ def save_notebook(nb: Dict[str, Any], path: Union[str, pathlib.Path]) -> None:
     """Save a Jupyter notebook JSON structure formatted with 1-space indentation."""
     path = pathlib.Path(path)
     with open(path, "w", encoding="utf-8") as f:
-        json.dumps(nb, ensure_ascii=False, indent=1)
         json.dump(nb, f, ensure_ascii=False, indent=1)
 
 
@@ -142,6 +142,170 @@ def delete_cells_by_snippet(cells: List[Dict[str, Any]], snippet: str) -> int:
     for idx in reversed(indices):
         cells.pop(idx)
     return len(indices)
+
+
+def cell_source(cell: Dict[str, Any]) -> str:
+    """Return a cell's source as one string."""
+    return "".join(cell.get("source", []))
+
+
+def safe_text(text: str, ascii_only: bool = False) -> str:
+    """Return printable text, optionally replacing non-ASCII characters."""
+    if not ascii_only:
+        return text
+    return text.encode("ascii", errors="replace").decode("ascii")
+
+
+def parse_index_list(value: str) -> List[int]:
+    """
+    Parse comma-separated cell indices and ranges.
+
+    Examples:
+        "69,75,78"
+        "69-80"
+        "69,75-80"
+    """
+    indices = set()
+    for part in value.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start_s, end_s = part.split("-", 1)
+            start, end = int(start_s), int(end_s)
+            if end < start:
+                start, end = end, start
+            indices.update(range(start, end + 1))
+        else:
+            indices.add(int(part))
+    return sorted(indices)
+
+
+def find_cells_by_snippets(
+    cells: List[Dict[str, Any]],
+    snippets: Sequence[str],
+    match_mode: str = "any",
+    cell_type: Optional[str] = None,
+    case_sensitive: bool = True,
+) -> List[int]:
+    """Find cell indices matching any/all snippets, optionally filtered by cell type."""
+    if not snippets:
+        return []
+    needles = list(snippets)
+    if not case_sensitive:
+        needles = [s.lower() for s in needles]
+
+    matches = []
+    for idx, cell in enumerate(cells):
+        if cell_type and cell.get("cell_type") != cell_type:
+            continue
+        src = cell_source(cell)
+        haystack = src if case_sensitive else src.lower()
+        checks = [needle in haystack for needle in needles]
+        if (match_mode == "all" and all(checks)) or (match_mode == "any" and any(checks)):
+            matches.append(idx)
+    return matches
+
+
+def print_cell(
+    idx: int,
+    cell: Dict[str, Any],
+    ascii_only: bool = False,
+    max_chars: Optional[int] = None,
+    line_numbers: bool = False,
+) -> None:
+    """Print a notebook cell in a readable diagnostic format."""
+    src = cell_source(cell)
+    if max_chars is not None:
+        src = src[:max_chars]
+    src = safe_text(src, ascii_only=ascii_only)
+    print(f"=== Cell {idx} ({cell.get('cell_type', 'unknown')}) ===")
+    if line_numbers:
+        for line_no, line in enumerate(src.splitlines(), start=1):
+            print(f"{line_no:03}: {line}")
+    else:
+        print(src)
+    print("=" * 40)
+
+
+def show_cells(
+    cells: List[Dict[str, Any]],
+    indices: Sequence[int],
+    ascii_only: bool = False,
+    max_chars: Optional[int] = None,
+    line_numbers: bool = False,
+) -> None:
+    """Print selected notebook cells by index."""
+    for idx in indices:
+        if idx < 0 or idx >= len(cells):
+            print(f"⚠️  Skipping out-of-range cell index: {idx}")
+            continue
+        print_cell(idx, cells[idx], ascii_only=ascii_only, max_chars=max_chars, line_numbers=line_numbers)
+
+
+def list_function_definitions(cells: List[Dict[str, Any]], ascii_only: bool = False) -> List[Dict[str, Any]]:
+    """Return and print Python function/class definitions found in code cells."""
+    found = []
+    for idx, cell in enumerate(cells):
+        if cell.get("cell_type") != "code":
+            continue
+        src = cell_source(cell)
+        definitions = []
+        for line_no, line in enumerate(src.splitlines(), start=1):
+            stripped = line.strip()
+            if stripped.startswith(("def ", "async def ", "class ")):
+                definitions.append((line_no, stripped))
+        if definitions:
+            found.append({"cell": idx, "definitions": definitions})
+            print(f"Cell {idx}:")
+            for line_no, definition in definitions:
+                print(f"  L{line_no}: {safe_text(definition, ascii_only=ascii_only)}")
+    return found
+
+
+def compile_code_cells(cells: List[Dict[str, Any]], allow_magics: bool = True) -> List[Dict[str, Any]]:
+    """
+    Parse every code cell with ast.parse and return syntax errors.
+
+    Jupyter magic-only cells can be skipped with allow_magics=True.
+    """
+    errors = []
+    for idx, cell in enumerate(cells):
+        if cell.get("cell_type") != "code":
+            continue
+        src = cell_source(cell)
+        stripped = src.lstrip()
+        if allow_magics and (stripped.startswith("%") or stripped.startswith("!")):
+            continue
+        try:
+            ast.parse(src)
+        except SyntaxError as exc:
+            line = ""
+            lines = src.splitlines()
+            if exc.lineno and 1 <= exc.lineno <= len(lines):
+                line = lines[exc.lineno - 1]
+            errors.append({
+                "cell": idx,
+                "line": exc.lineno,
+                "offset": exc.offset,
+                "message": exc.msg,
+                "source_line": line,
+            })
+    return errors
+
+
+def replace_cell_at_index(
+    cells: List[Dict[str, Any]],
+    index: int,
+    new_source: Union[str, List[str]],
+    cell_type: Optional[str] = None,
+) -> int:
+    """Replace a cell by explicit index. Returns the replaced index."""
+    if index < 0 or index >= len(cells):
+        raise IndexError(f"Cell index out of range: {index}")
+    target_type = cell_type or cells[index].get("cell_type", "code")
+    cells[index] = create_cell(target_type, new_source, cells[index].get("metadata"))
+    return index
 
 
 # ---------------------------------------------------------------------------
@@ -528,6 +692,44 @@ def main():
     delete_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
     delete_parser.add_argument("--target", "-t", required=True, help="Snippet matching cells to delete")
 
+    # Subcommand: Search cells
+    search_parser = subparsers.add_parser("search", help="Search cells by one or more snippets")
+    search_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
+    search_parser.add_argument("--target", "-t", action="append", required=True, help="Snippet to search for; repeat for multiple snippets")
+    search_parser.add_argument("--mode", choices=["any", "all"], default="any", help="Match any or all snippets")
+    search_parser.add_argument("--cell-type", choices=["code", "markdown"], help="Restrict search to one cell type")
+    search_parser.add_argument("--ignore-case", action="store_true", help="Case-insensitive search")
+    search_parser.add_argument("--ascii", action="store_true", help="Replace non-ASCII characters in output")
+    search_parser.add_argument("--max-chars", type=int, default=500, help="Maximum source characters to print per matching cell")
+    search_parser.add_argument("--line-numbers", action="store_true", help="Print line numbers")
+
+    # Subcommand: Show selected cells
+    show_parser = subparsers.add_parser("show", help="Print selected cells by index or index range")
+    show_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
+    show_parser.add_argument("--indices", "-i", required=True, help="Cell indices/ranges, e.g. 69,75-80")
+    show_parser.add_argument("--ascii", action="store_true", help="Replace non-ASCII characters in output")
+    show_parser.add_argument("--max-chars", type=int, help="Maximum source characters to print per cell")
+    show_parser.add_argument("--line-numbers", action="store_true", help="Print line numbers")
+
+    # Subcommand: List function/class definitions
+    funcs_parser = subparsers.add_parser("functions", help="List function/class definitions in code cells")
+    funcs_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
+    funcs_parser.add_argument("--ascii", action="store_true", help="Replace non-ASCII characters in output")
+
+    # Subcommand: Validate code cells by parsing Python syntax
+    validate_parser = subparsers.add_parser("validate", help="Validate notebook JSON and compile Python code cells")
+    validate_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
+    validate_parser.add_argument("--strict-magics", action="store_true", help="Do not skip magic/shell cells")
+    validate_parser.add_argument("--ascii", action="store_true", help="Replace non-ASCII characters in output")
+
+    # Subcommand: Replace cell by explicit index
+    replace_index_parser = subparsers.add_parser("replace-index", help="Replace cell content by explicit cell index")
+    replace_index_parser.add_argument("--notebook", "-n", type=pathlib.Path, required=True, help="Path to notebook")
+    replace_index_parser.add_argument("--index", "-i", type=int, required=True, help="0-indexed cell number to replace")
+    replace_index_parser.add_argument("--content", "-c", help="New content string")
+    replace_index_parser.add_argument("--content-file", type=pathlib.Path, help="File containing new cell content")
+    replace_index_parser.add_argument("--cell-type", choices=["code", "markdown"], help="Override cell type")
+
     # Legacy flag compatibility: if running with just --notebook
     parser.add_argument("--notebook", "-n", type=pathlib.Path, help="Target notebook path (runs visionxai recipe by default if specified without subcommand)")
 
@@ -590,6 +792,70 @@ def main():
             count = delete_cells_by_snippet(nb["cells"], args.target)
             save_notebook(nb, args.notebook)
             print(f"✅ Deleted {count} cell(s) matching {args.target!r} in {args.notebook}")
+        except Exception as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+
+    elif args.command == "search":
+        nb = load_notebook(args.notebook)
+        matches = find_cells_by_snippets(
+            nb["cells"],
+            args.target,
+            match_mode=args.mode,
+            cell_type=args.cell_type,
+            case_sensitive=not args.ignore_case,
+        )
+        print(f"Notebook: {args.notebook}")
+        print(f"Matched cells: {matches}")
+        show_cells(
+            nb["cells"],
+            matches,
+            ascii_only=args.ascii,
+            max_chars=args.max_chars,
+            line_numbers=args.line_numbers,
+        )
+
+    elif args.command == "show":
+        nb = load_notebook(args.notebook)
+        show_cells(
+            nb["cells"],
+            parse_index_list(args.indices),
+            ascii_only=args.ascii,
+            max_chars=args.max_chars,
+            line_numbers=args.line_numbers,
+        )
+
+    elif args.command == "functions":
+        nb = load_notebook(args.notebook)
+        list_function_definitions(nb["cells"], ascii_only=args.ascii)
+
+    elif args.command == "validate":
+        nb = load_notebook(args.notebook)
+        errors = compile_code_cells(nb["cells"], allow_magics=not args.strict_magics)
+        print(f"Notebook: {args.notebook}")
+        print(f"Cells: {len(nb['cells'])}")
+        print(f"Syntax errors: {len(errors)}")
+        for error in errors:
+            print(
+                f"Cell {error['cell']} line {error['line']} offset {error['offset']}: "
+                f"{error['message']}"
+            )
+            print(safe_text(error["source_line"], ascii_only=args.ascii))
+        if errors:
+            sys.exit(1)
+
+    elif args.command == "replace-index":
+        nb = load_notebook(args.notebook)
+        content = args.content
+        if args.content_file:
+            content = args.content_file.read_text(encoding="utf-8")
+        if content is None:
+            print("ERROR: Must provide --content or --content-file")
+            sys.exit(1)
+        try:
+            replaced_idx = replace_cell_at_index(nb["cells"], args.index, content, args.cell_type)
+            save_notebook(nb, args.notebook)
+            print(f"✅ Replaced cell at index {replaced_idx} in {args.notebook}")
         except Exception as e:
             print(f"ERROR: {e}")
             sys.exit(1)
