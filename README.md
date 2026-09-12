@@ -37,7 +37,6 @@ This repository contains a collection of Python utilities designed to assist wit
 
 ### 5. patch_notebook
 
-
 - **Directory:** `patch_notebook/`
 - **File:** `patch_notebook.py`
 - **Description:**
@@ -63,49 +62,84 @@ cd clipboard_whitespace_clean
 python clipboard_clean.py
 ```
 
-### `flatten_dataset` Usage:
+### `flatten_dataset` Usage
 
 ```powershell
 cd flatten_dataset
 python flatten_dataset.py -i "D:\path\to\image_captioning_dataset" -o "D:\path\to\image_captioning_dataset_flattened" --mode copy
 ```
 
-### `patch_notebook` Operations:
-
+### `patch_notebook` Operations
 
 1. **List cells in any notebook:**
+
    ```powershell
    python patch_notebook.py list -n "path/to/notebook.ipynb"
    ```
 
-2. **Insert a new code or markdown cell:**
+2. **Search cells by snippets:**
+
+   ```powershell
+   python patch_notebook.py search -n "path/to/notebook.ipynb" -t "import torch" --mode all
+   ```
+
+3. **Show specific cells by index/range:**
+
+   ```powershell
+   python patch_notebook.py show -n "path/to/notebook.ipynb" -i "0-5,10"
+   ```
+
+4. **List Python function and class definitions:**
+
+   ```powershell
+   python patch_notebook.py functions -n "path/to/notebook.ipynb"
+   ```
+
+5. **Validate syntax of code cells:**
+
+   ```powershell
+   python patch_notebook.py validate -n "path/to/notebook.ipynb"
+   ```
+
+6. **Insert a new code or markdown cell:**
+
    ```powershell
    python patch_notebook.py insert -n "path/to/notebook.ipynb" -t "target snippet" --position after -c "print('hello')" --cell-type code
    ```
 
-3. **Replace cell matching a snippet:**
+7. **Replace cell matching a snippet:**
+
    ```powershell
    python patch_notebook.py replace -n "path/to/notebook.ipynb" -t "def old_func():" --content-file "new_code.py"
    ```
 
-4. **Delete matching cells:**
+8. **Replace cell by explicit index:**
+
+   ```powershell
+   python patch_notebook.py replace-index -n "path/to/notebook.ipynb" -i 12 --content-file "new_code.py"
+   ```
+
+9. **Delete matching cells:**
+
    ```powershell
    python patch_notebook.py delete -n "path/to/notebook.ipynb" -t "deprecated_code"
    ```
 
-5. **Run VisionXAI patch recipe:**
-   ```powershell
-   python patch_notebook.py visionxai -n "d:\path\to\bangla_image_caption.ipynb"
-   ```
+10. **Run VisionXAI patch recipe:**
 
-6. **Python Library API Usage:**
-   ```python
-   from patch_notebook import load_notebook, save_notebook, insert_cell, replace_cell_source, code_cell
+    ```powershell
+    python patch_notebook.py visionxai -n "d:\path\to\bangla_image_caption.ipynb"
+    ```
 
-   nb = load_notebook("my_notebook.ipynb")
-   insert_cell(nb["cells"], code_cell("import tensorflow as tf"), index=0)
-   save_notebook(nb, "my_notebook.ipynb")
-   ```
+11. **Python Library API Usage:**
+
+    ```python
+    from patch_notebook import load_notebook, save_notebook, insert_cell, replace_cell_source, code_cell
+
+    nb = load_notebook("my_notebook.ipynb")
+    insert_cell(nb["cells"], code_cell("import tensorflow as tf"), index=0)
+    save_notebook(nb, "my_notebook.ipynb")
+    ```
 
 Refer to the source code of each script for specific usage instructions and configurable options.
 
@@ -117,4 +151,3 @@ Refer to the source code of each script for specific usage instructions and conf
 ## License
 
 This project is provided for educational and research purposes.
-
